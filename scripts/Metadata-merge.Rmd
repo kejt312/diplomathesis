@@ -1,0 +1,389 @@
+---
+title: "Merging metadata"
+output: html_document
+---
+
+
+```{r, include=FALSE}
+library(readxl)
+library(dplyr)
+library(stringr)
+library(mgsub)
+library(knitr)
+library(validate)
+library(chron)
+```
+
+First, all metadata files were imported and transformed to dataframe format if needed.
+
+```{r, echo=TRUE}
+Baxter_SraRunTable <- read.csv("metadata/Baxter_SraRunTable.txt")
+Yang_SraRunTable <- read.csv("metadata/Yang_SraRunTable.txt")
+Zackular_EDRN_MIMARKS <- read_excel("metadata/Zackular_EDRN_MIMARKS.xlsx")
+Zeller_SraRunTable <- read.csv("metadata/Zeller_SraRunTable.txt")
+
+Zackular_EDRN_MIMARKS <- as.data.frame(Zackular_EDRN_MIMARKS)
+```
+
+During the import, Zeller dataframe columns shifted because of the commas in column names. This was corrected before proceeding with the next steps.  
+
+```{r, echo=TRUE}
+#colnames(Zeller_SraRunTable)
+names(Zeller_SraRunTable)[47] <- "geographic_location_(countryand/orsea,region)"
+names(Zeller_SraRunTable)[48:66] <- names(Zeller_SraRunTable)[49:67]
+#colnames(Zeller_SraRunTable) ##checking
+names(Zeller_SraRunTable)[59] <- "geographic_location_(country_and/or_sea,region).1"
+names(Zeller_SraRunTable)[60:65] <- names(Zeller_SraRunTable)[61:66]
+Zeller_SraRunTable <- Zeller_SraRunTable[ -c(66:67) ]
+#colnames(Zeller_SraRunTable) ##checking
+```
+
+Identical and similar strings in the colnames of dataframes were searched for using following command.
+```{r, echo=TRUE}
+#names(Zeller_SraRunTable)[grepl("BioSampleModel", colnames(Zeller_SraRunTable))] ##example for searching for the string "BioSampleModel" in the colnames of Zeller dataframe
+```
+
+Column with the study name was added to each dataframe. For studies Zeller and Yang which don't contain any information in their metadata dataframes about the 16S rRNA subfragment, "target_subfragment" column was added with the information obtained from the study text.
+
+```{r, echo=TRUE}
+Baxter_SraRunTable$study <- "Baxter"
+Yang_SraRunTable$study <- "Yang"
+Zackular_EDRN_MIMARKS$study <- "Zackular"
+Zeller_SraRunTable$study <- "Zeller"
+
+Yang_SraRunTable$target_subfragment <- "V3-V4"
+Zeller_SraRunTable$target_subfragment <- "V4"
+```
+
+Columns were renamed so that columns of dataframes from different studies have the same name if they contain the same information.
+
+```{r, echo=TRUE}
+Yang_SraRunTable_rn <- rename(Yang_SraRunTable, c(env_material = isolation_source))
+
+Zeller_SraRunTable_rn <- rename(Zeller_SraRunTable, c(collection_date = Collection_Date, env_material = body_product, geo_loc_name_country = "geographic_location_(countryand/orsea,region)", Host = Organism, age = AGE, bmi = BMI, cancer_stage = AJCC_Stage, diagnosis = Diagnosis)) 
+
+Zackular_EDRN_MIMARKS_rn <- rename(Zackular_EDRN_MIMARKS, c(Run = sample_id, Assay.Type = lib_const_meth, env_material = body_product, Host = feature, LibrarySource = investigation_type, Platform = seq_meth, diagnosis = disease_stat, gender = sex, Height = "tot_height(cm)", Target_Gene = target_gene, weight = "tot_mass(kg)"))
+```
+
+Since Zackular dataframe contained spaces at the end of the strings in some columns, this was adjusted using substr() function since gsub() and trimws() didn't work. 
+
+```{r, echo=TRUE}
+Zackular_EDRN_MIMARKS_rn$age  <- substr(Zackular_EDRN_MIMARKS_rn$age,1,2)
+Zackular_EDRN_MIMARKS_rn$gender <- substr(Zackular_EDRN_MIMARKS_rn$gender,1,1)
+```
+
+Object types of certain columns were changed before merging.
+
+```{r, echo=TRUE}
+Zeller_SraRunTable_transf <- Zeller_SraRunTable_rn %>%
+  mutate(cancer_stage = as.numeric(as.roman(cancer_stage)))
+
+Baxter_SraRunTable_transf <- Baxter_SraRunTable %>%  
+  mutate(collection_date = as.character(collection_date))
+
+Zackular_EDRN_MIMARKS_transf <- Zackular_EDRN_MIMARKS_rn %>%
+  mutate(age = as.numeric(age)) %>%
+  mutate(samp_store_temp = as.character(samp_store_temp))
+```
+
+Dataframes were merged using the full_join() function. 
+
+```{r, echo=TRUE}
+merge1 <- full_join(Baxter_SraRunTable_transf, Zeller_SraRunTable_transf, by = c("Run", "Assay.Type", "AvgSpotLen", "Bases", "BioProject", "BioSample", "Bytes", "Center.Name", "collection_date", "Consent", "DATASTORE.filetype", "DATASTORE.provider", "DATASTORE.region", "env_material", "Experiment", "geo_loc_name_country", "Host", "Instrument", "Library.Name", "LibraryLayout", "LibrarySelection", "LibrarySource", "Platform", "ReleaseDate", "Sample.Name", "SRA.Study", "age", "bmi", "cancer_stage", "gender", "sex", "study", "target_subfragment"), suffix = c(".Baxter", ".Zeller"))
+
+merge2 <- full_join(merge1, Yang_SraRunTable_rn, by = c("Run", "Assay.Type", "AvgSpotLen", "Bases", "BioProject", "BioSample", "BioSampleModel", "Bytes", "Center.Name", "collection_date", "Consent", "DATASTORE.filetype", "DATASTORE.provider", "DATASTORE.region", "env_material", "Experiment", "geo_loc_name_country", "geo_loc_name_country_continent", "geo_loc_name", "Host", "Instrument", "lat_lon", "Library.Name", "LibraryLayout", "LibrarySelection", "LibrarySource", "Organism", "Platform", "ReleaseDate", "Sample.Name", "SRA.Study", "study", "target_subfragment"), suffix = c("", ".Yang"))
+
+merge3 <- full_join(merge2, Zackular_EDRN_MIMARKS_transf, by = c("Run", "Assay.Type", "env_material", "geo_loc_name", "Host", "LibrarySource", "Platform", "samp_store_temp", "age", "chimera_check", "gender", "Height", "pcr_cond", "pcr_primers", "samp_collect_device", "seq_qual_check", "Target_Gene", "target_subfragment", "weight", "host_subject_id", "study"), suffix = c("", ".Zackular"))
+
+names(merge3)[names(merge3) == "diagnosis"] <- "diagnosis.Zackular"
+```
+
+Strings in certain columns in merge3 dataframe (final merge) were changed to obtain uniform data.
+
+```{r, echo=TRUE}
+merge3$env_material <- mgsub(merge3$env_material, c("intestinal fecal", "stool"), c("feces", "feces"))
+
+merge3[which(merge3$collection_date == "NA"), "collection_date"] <- NA
+
+merge3[which(merge3$gender == "m"), "gender"] <- "male"
+merge3[which(merge3$gender == "f"), "gender"] <- "female"
+merge3[which(merge3$gender == ""), "gender"] <- NA
+
+merge3[which(merge3$DATASTORE.filetype == "sra,fastq"), "DATASTORE.filetype"] <- "fastq,sra"
+
+merge3$Assay.Type <- sub("amplicon", "AMPLICON", merge3$Assay.Type)
+merge3$Host <- sub("homo sapien", "Homo sapiens", merge3$Host)
+merge3$LibrarySource <- sub("metagenomic", "METAGENOMIC", merge3$LibrarySource)
+merge3$Platform <- sub("illumina", "ILLUMINA", merge3$Platform)
+```
+
+Next, a smaller dataframe with important metadata was created.
+
+```{r, echo=TRUE}
+ml_merge <- merge3[c("Run", "diagnosis.Baxter", "diagnosis.Zeller", "diagnosis.Zackular", "isolate", "gender", "age", "cancer_stage", "bmi", "host_race", "Asian", "Black", "white", "study", "target_subfragment", "Platform")]
+```
+
+Columns "disease_stat"(healthy/CRC) and "diagnosis"(healthy/adenoma/CRC) were created.
+
+```{r, echo=TRUE}
+ml_merge$disease_stat <- NA
+ml_merge$diagnosis <- NA
+
+# Yang
+ml_merge[grep("oControl_", ml_merge$isolate), "disease_stat"] <- "healthy"
+ml_merge[grep("yControl_", ml_merge$isolate), "disease_stat"] <- "healthy"
+ml_merge[grep("oCTRL_", ml_merge$isolate), "disease_stat"] <- "healthy"
+ml_merge[grep("yCTRL_", ml_merge$isolate), "disease_stat"] <- "healthy"
+
+ml_merge[grep("Old_", ml_merge$isolate), "disease_stat"] <- "CRC"
+ml_merge[grep("Young_", ml_merge$isolate), "disease_stat"] <- "CRC"
+ml_merge[grep("oCRC_", ml_merge$isolate), "disease_stat"] <- "CRC"
+ml_merge[grep("yCRC_", ml_merge$isolate), "disease_stat"] <- "CRC"
+
+# Baxter
+ml_merge[grep("High Risk Normal", ml_merge$diagnosis.Baxter), "diagnosis"] <- "healthy"
+ml_merge[grep("Normal", ml_merge$diagnosis.Baxter), "diagnosis"] <- "healthy"
+ml_merge[grep("Adenoma", ml_merge$diagnosis.Baxter), "diagnosis"] <- "adenoma"
+ml_merge[grep("adv Adenoma", ml_merge$diagnosis.Baxter), "diagnosis"] <- "adenoma"
+ml_merge[grep("Cancer", ml_merge$diagnosis.Baxter), "diagnosis"] <- "CRC"
+
+# Zeller
+ml_merge[grep("Normal", ml_merge$diagnosis.Zeller), "diagnosis"] <- "healthy"
+ml_merge[grep("Small adenoma", ml_merge$diagnosis.Zeller), "diagnosis"] <- "adenoma"
+ml_merge[grep("Large adenoma", ml_merge$diagnosis.Zeller), "diagnosis"] <- "adenoma"
+ml_merge[grep("Cancer", ml_merge$diagnosis.Zeller), "diagnosis"] <- "CRC"
+
+# Zackular
+ml_merge[grep("normal", ml_merge$diagnosis.Zackular), "diagnosis"] <- "healthy"
+ml_merge[grep("adenoma", ml_merge$diagnosis.Zackular), "diagnosis"] <- "adenoma"
+ml_merge[grep("carcinoma", ml_merge$diagnosis.Zackular), "diagnosis"] <- "CRC"
+
+# disease_stat column
+ml_merge[grep("healthy", ml_merge$diagnosis), "disease_stat"] <- "healthy"
+ml_merge[grep("adenoma", ml_merge$diagnosis), "disease_stat"] <- "healthy"
+ml_merge[grep("CRC", ml_merge$diagnosis), "disease_stat"] <- "CRC"
+
+```
+
+Column "race" was created and filled out with data distinguishing between asian, black, hispanic and white race.
+
+```{r, echo=TRUE}
+ml_merge$race <- NA
+
+ml_merge[grep("1", ml_merge$Asian), "race"] <- "asian"
+ml_merge[grep("1", ml_merge$Black), "race"] <- "black"
+ml_merge[grep("1", ml_merge$white), "race"] <- "white"
+
+ml_merge[grep("asian", ml_merge$host_race), "race"] <- "asian"
+ml_merge[grep("black", ml_merge$host_race), "race"] <- "black"
+ml_merge[grep("hispanic", ml_merge$host_race), "race"] <- "hispanic"
+ml_merge[grep("white", ml_merge$host_race), "race"] <- "white"
+```
+
+Unnecessary columns (used for filling out the new columns in ml_merge dataframe) were dropped.
+
+```{r, echo=TRUE}
+ml_merge = subset(ml_merge, select = -c(diagnosis.Baxter, diagnosis.Zeller, diagnosis.Zackular, isolate, host_race, Asian, Black, white))
+```
+
+Diagnosis column filled out for Yang study
+
+```{r, echo=TRUE}
+ml_merge[which(ml_merge$study == "Yang" & ml_merge$disease_stat == "healthy"), "diagnosis"] <- "healthy"
+ml_merge[which(ml_merge$study == "Yang" & ml_merge$disease_stat == "CRC"), "diagnosis"] <- "CRC"
+```
+
+Validation
+
+- Checking Zackular dataframe for weird spaces at the end since trimws() and gsub() didn't work
+```{r, echo=TRUE}
+
+rules <- validator(
+  field_length(age, n=4))
+
+out <- confront(Zackular_EDRN_MIMARKS, rules)
+
+summary(out)
+#Two whitespaces at the end of the string detected, however gsub("  ", "", Zackular_EDRN_MIMARKS_rn$age) still doesn't work 
+```
+
+
+- Checking the range of age data
+```{r, echo=TRUE}
+rules2 <- validator(
+  in_range(age, min=13, max=100))
+
+out2 <- confront(ml_merge, rules2)
+
+summary(out2) 
+```
+All age data (except for NA) pass the rule (Yang data do not contain age directly).
+
+
+- Transforming bmi object type
+```{r, echo=TRUE}
+unique(ml_merge$bmi) #decimal commas and strings "missing" and "" are found in unique elements; commas must be transformed to points before changing bmi column into numeric type
+
+#length(unique(ml_merge$bmi)) #215
+
+ml_merge$bmi <- gsub(",", ".", ml_merge$bmi)
+#length(unique(ml_merge$bmi)) #185
+
+ml_merge$bmi <- as.numeric(ml_merge$bmi)
+#length(unique(ml_merge$bmi)) #183; exactly 185-2 since strings "missing" and "" are replaced by NA
+```
+
+
+- Looking at unique elements of columns (in order to ex. replace "" with NA if needed)
+```{r, echo=TRUE}
+unique(ml_merge$gender)
+unique(ml_merge$cancer_stage)
+unique(ml_merge$disease_stat)
+unique(ml_merge$diagnosis)
+unique(ml_merge$race)
+unique(ml_merge$study)
+unique(ml_merge$target_subfragment)
+unique(ml_merge$Platform)
+```
+- Dealing with empty strings in target_subfragment column.
+```{r, results=FALSE}
+## Visualising where the empty strings are
+which(ml_merge$target_subfragment=="") #only 3 rows (from Baxter dataframe)
+ml_merge[which(ml_merge$target_subfragment==""), "target_subfragment"] <- NA
+```
+
+- Dealing with NA in disease_stat column (all samples should be either healthy or CRC)
+```{r, results=FALSE}
+which(is.na(ml_merge$disease_stat)) #columns with NA
+ml_merge[which(is.na(ml_merge$disease_stat)), "study"] #three studies detected (with not all of their data being determined as NA) -> information missing in single metadata dataframes 
+
+# Looking at single study dataframes to check for NA values in columns used for filling out the disease_stat column in ml_merge
+
+# Baxter
+which(is.na(Baxter_SraRunTable_transf$diagnosis)) #2 rows
+Baxter_SraRunTable_transf[which(is.na(Baxter_SraRunTable_transf$diagnosis)),] #no info about are the samples healthy/CRC -> stays as NA
+
+# Yang
+which(is.na(Yang_SraRunTable_rn$isolate)) #0
+which(Yang_SraRunTable_rn$isolate=="") #200 rows
+Yang_SraRunTable_rn[273,]
+unique(which(Yang_SraRunTable_rn$Assay.Type=="WGS") == which(Yang_SraRunTable_rn$isolate=="")) # TRUE -> all samples with no information about disease status are whole genome sequencing data -> not important for our analysis
+
+# Zeller
+which(is.na(Zeller_SraRunTable_transf$diagnosis)) #0
+which(Zeller_SraRunTable_transf$diagnosis=="") #96 rows
+Zeller_SraRunTable_transf[1,] #"Colonic tissue was collected from 48 patients undergoing colorectal cancer surgery"
+which(Zeller_SraRunTable_transf$tissue_type=="normal")
+which(Zeller_SraRunTable_transf$tissue_type=="tumor")
+# exactly 48 normal and 48 tumor tissue types (as stated in Supplementary Dataset S2 from Zeller study) -> these data contain microbiota from tissue samples, not fecal samples -> not important for our analysis
+```
+
+- Removing samples not present in features data frame (reduced to species level) (WGS data from Yang, tissue samples from Zeller)
+```{r, results=FALSE}
+load("features.RData")
+diff <- setdiff(ml_merge$Run, colnames(features))
+ml_merge <- ml_merge[!(ml_merge$Run %in% diff),]
+```
+
+Visualisation of the final data frame
+```{r, echo=FALSE}
+knitr::kable(head(ml_merge), "simple")
+```
+
+Saving 
+```{r, results=FALSE}
+rownames(ml_merge) <- ml_merge$Run
+ml_merge <- ml_merge[order(row.names(ml_merge)),]
+save(ml_merge, file="metadata_final_merge+exclusion.RData")
+write.csv(ml_merge,"metadata_final_merge+exclusion.csv", row.names = FALSE)
+```
+
+Mergeing Microcolo metadata
+
+- Import Microcolo metadata and subsetting to extract relevant information
+```{r, results=FALSE}
+microcolo <- read_excel("metadata/metadata_Microcolo.xlsx")
+microcolo_subset <- microcolo[, c("Geschlecht", "LNR", "GB-Datum", "Stuhl.Datum", "Histo.Befund", "severste.Histo", "GRÖSSE", "GEWICHT")]
+```
+
+- Calculating age and BMI and renaming to obtain uniform data with ml_merge
+```{r, results=FALSE}
+microcolo_subset$`GB-Datum`<- as.Date(microcolo_subset$`GB-Datum`)
+microcolo_subset$Stuhl.Datum <- as.Date(microcolo_subset$Stuhl.Datum)
+microcolo_subset$age <- as.numeric(difftime(microcolo_subset$Stuhl.Datum, microcolo_subset$`GB-Datum`, units = "weeks"))/52
+microcolo_subset$age <- round(microcolo_subset$age, digits = 0)
+
+#BMI = weight(kg) ÷ height(m)^2
+microcolo_subset$GRÖSSE <- microcolo_subset$GRÖSSE/100
+microcolo_subset$bmi <- microcolo_subset$GEWICHT/(microcolo_subset$GRÖSSE)^2
+microcolo_subset$bmi <- round(microcolo_subset$bmi, digits = 1)
+
+microcolo_subset<- as.data.frame(microcolo_subset)
+
+microcolo_subset[which(microcolo_subset$Geschlecht == "f"), "Geschlecht"] <- "female"
+microcolo_subset[which(microcolo_subset$Geschlecht == "m"), "Geschlecht"] <- "male"
+
+microcolo_subset[which(microcolo_subset$Histo.Befund == "Ctrl" | microcolo_subset$Histo.Befund == "low-risk"), "disease_stat"] <- "healthy"
+microcolo_subset[which(microcolo_subset$Histo.Befund == "Ctrl"), "diagnosis"] <- "healthy"
+microcolo_subset[which(microcolo_subset$Histo.Befund == "low-risk"), "diagnosis"] <- "adenoma"
+
+microcolo_subset <- rename(microcolo_subset, c(Run = LNR, gender = Geschlecht)) 
+microcolo_subset[, c("GEWICHT", "GRÖSSE", "GB-Datum", "Stuhl.Datum", "Histo.Befund", "severste.Histo")] <- list(NULL)
+microcolo_subset$study <- "Microcolo"
+microcolo_subset$target_subfragment <- "V3-V4"
+microcolo_subset$Platform <- "ILLUMINA"
+```
+
+- Mergeing with ml_merge
+```{r, results=FALSE}
+ml_merge_microcolo <- full_join(ml_merge, microcolo_subset, by = c("Run", "Platform", "age","gender", "target_subfragment", "bmi", "disease_stat", "diagnosis", "study"))
+```
+
+-Saving 
+```{r, results=FALSE}
+rownames(ml_merge_microcolo) <- ml_merge_microcolo$Run
+save(ml_merge_microcolo, file="metadata_final+microcolo.RData")
+write.csv(ml_merge_microcolo,"metadata_final+microcolo.csv", row.names = FALSE)
+```
+
+Mergeing Jin dataset
+```{r, results=FALSE}
+Jin_SraRunTable <- read.csv("metadata/Jin_SraRunTable.txt")
+
+Jin_SraRunTable_subset <- Jin_SraRunTable[, c("Run", "Platform", "Sample.Name")]
+Jin_SraRunTable_subset <- Jin_SraRunTable_subset [grep(pattern = "HC|adenoma|carcinoma", x = Jin_SraRunTable_subset$Sample.Name), ] #subset only relevant samples
+
+Jin_SraRunTable_subset[grep("carcinoma", Jin_SraRunTable_subset$Sample.Name), "Sample.Name"] <- "CRC"
+Jin_SraRunTable_subset[grep("adenoma", Jin_SraRunTable_subset$Sample.Name), "Sample.Name"] <- "adenoma"
+Jin_SraRunTable_subset[grep("HC", Jin_SraRunTable_subset$Sample.Name), "Sample.Name"] <- "healthy"
+
+Jin_SraRunTable_subset <- rename(Jin_SraRunTable_subset, diagnosis = Sample.Name)
+Jin_SraRunTable_subset$study <- "Jin"
+Jin_SraRunTable_subset$target_subfragment <- "V3-V4"
+
+Jin_SraRunTable_subset$disease_stat <- NA
+Jin_SraRunTable_subset[which(Jin_SraRunTable_subset$diagnosis=="CRC"), "disease_stat"] <- "CRC"
+Jin_SraRunTable_subset[which(Jin_SraRunTable_subset$diagnosis=="adenoma"), "disease_stat"] <- "healthy"
+Jin_SraRunTable_subset[which(Jin_SraRunTable_subset$diagnosis=="healthy"), "disease_stat"] <- "healthy"
+
+ml_merge_Jin <- full_join(ml_merge, Jin_SraRunTable_subset, by = c("Run", "Platform", "disease_stat", "diagnosis", "study", "target_subfragment"))
+```
+
+- Saving
+```{r, results=FALSE}
+save(ml_merge_Jin, file="metadata_final+Jin.RData")
+write.csv(ml_merge_Jin,"metadata_final+Jin.csv")
+```
+
+Considering adenoma as CRC
+```{r, results=FALSE}
+ml_merge[grep("adenoma", ml_merge$diagnosis), "disease_stat"] <- "CRC"
+
+rownames(ml_merge) <- ml_merge$Run
+save(ml_merge, file="metadata_final_adenomaasCRC.RData")
+write.csv(ml_merge,"metadata_final_adenomaasCRC.csv", row.names = TRUE)
+```
+
+
+
+
